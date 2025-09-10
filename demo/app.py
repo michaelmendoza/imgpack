@@ -7,7 +7,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body
 from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from utils import encode_data, pack_envelope
+from imgpack.utils import encode_data, pack_envelope
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8765"))
@@ -34,7 +34,7 @@ def default_array(h: int = 256, w: int = 384) -> np.ndarray:
 @app.get("/", response_class=HTMLResponse)
 def index_html():
     # Serve the static HTML file
-    return FileResponse("index.html")
+    return FileResponse("./demo/index.html")
 
 @app.post("/set_array")
 def set_array(

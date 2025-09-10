@@ -4,7 +4,7 @@ import json, struct
 from typing import Dict, Tuple, Any
 import numpy as np
 
-MAGIC = b"CBIN"   # 4 bytes
+MAGIC = b"IMPK"   # 4 bytes
 VERSION = 1       # 1 byte
 
 def encode_data(
@@ -50,8 +50,6 @@ def encode_data(
     size_mb = size_bytes / (1024*1024)
 
     header: Dict[str, Any] = {
-        "format": "cbin",
-        "type": "image",
         "version": VERSION,
         "dtype": dtype_str,          # "uint8" | "uint16"
         "endianness": "LE",          # payload endianness

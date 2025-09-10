@@ -12,7 +12,7 @@ from imgpack.utils import encode_data, pack_envelope
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8765"))
 
-app = FastAPI(title="CBIN demo")
+app = FastAPI(title="Imgpack demo")
 
 app.add_middleware(
     CORSMiddleware,

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>CBIN WebSocket Demo</title>
+  <title>Imgpack WebSocket Demo</title>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <style>
     body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 20px; }
@@ -15,7 +15,7 @@
   </style>
 </head>
 <body>
-  <h1>CBIN WebSocket Demo</h1>
+  <h1>Imgpack WebSocket Demo</h1>
   <div class="row">
     <button id="btnReload">Reload (ask server to resend)</button>
   </div>
@@ -42,8 +42,8 @@ function readHeaderAndBlob(arrayBuffer) {
     String.fromCharCode(dv.getUint8(off + 2)) +
     String.fromCharCode(dv.getUint8(off + 3));
   off += 4;
-  if (magic !== "CBIN") {
-    throw new Error(`Bad MAGIC ${magic}, expected CBIN`);
+  if (magic !== "IMPK") {
+    throw new Error(`Bad MAGIC ${magic}, expected IMPK`);
   }
 
   // VERSION (1)

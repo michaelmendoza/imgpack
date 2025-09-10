@@ -1,6 +1,6 @@
 # ImgPack
 
-A tiny binary format for packing and streaming 2D NumPy arrays (images) from Python to the browser.  
+A simple binary format for packing and streaming 2D NumPy arrays (images) from Python to the browser.  
 Built with **FastAPI + WebSockets** on the server and **TypedArrays + Canvas** in the browser.  
 
 Currently, ImgPack supports **lossy quantization** into either **8-bit** (`uint8`, 0–255) or **16-bit** (`uint16`, 0–4096) integer buffers.  

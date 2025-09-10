@@ -6,3 +6,7 @@ __pycache__
 .idea
 .vscode
 .VSCodeCounter
+
+output/
+build/
+dist/

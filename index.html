@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>CBIN WebSocket Demo</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 20px; }
+    #wrap { display: flex; gap: 24px; align-items: flex-start; }
+    #meta { max-width: 600px; }
+    canvas { image-rendering: pixelated; border: 1px solid #ccc; }
+    code { background: #f6f8fa; padding: 2px 4px; border-radius: 4px; }
+    button { padding: 6px 10px; }
+    .row { margin: 8px 0; }
+  </style>
+</head>
+<body>
+  <h1>CBIN WebSocket Demo</h1>
+  <div class="row">
+    <button id="btnReload">Reload (ask server to resend)</button>
+  </div>
+  <div id="wrap">
+    <canvas id="cv" width="10" height="10"></canvas>
+    <div id="meta">
+      <div><strong>Status:</strong> <span id="status">connecting…</span></div>
+      <pre id="header" style="white-space:pre-wrap;background:#f9fafb;border:1px solid #eee;padding:8px;border-radius:6px;"></pre>
+      <div style="font-size: 10px;">Envelope: <code>MAGIC(4)|VERSION(1)|HEADER_LEN(4,BE)|HEADER_JSON|PADDING(0 or 1)|BLOB</code></div>
+    </div>
+  </div>
+
+<script>
+// --- Binary envelope decoding (must match server) ---
+
+function readHeaderAndBlob(arrayBuffer) {
+  const dv = new DataView(arrayBuffer);
+  let off = 0;
+
+  // MAGIC (4)
+  const magic =
+    String.fromCharCode(dv.getUint8(off)) +
+    String.fromCharCode(dv.getUint8(off + 1)) +
+    String.fromCharCode(dv.getUint8(off + 2)) +
+    String.fromCharCode(dv.getUint8(off + 3));
+  off += 4;
+  if (magic !== "CBIN") {
+    throw new Error(`Bad MAGIC ${magic}, expected CBIN`);
+  }
+
+  // VERSION (1)
+  const version = dv.getUint8(off); off += 1;
+  if (version < 1) throw new Error(`Unsupported version ${version}`);
+
+  // HEADER_LEN (4, big-endian)
+  const headerLen = dv.getUint32(off, false); off += 4;
+
+  // HEADER_JSON
+  const headerBytes = new Uint8Array(arrayBuffer, off, headerLen);
+  off += headerLen;
+  const headerStr = new TextDecoder("utf-8").decode(headerBytes);
+  const header = JSON.parse(headerStr);
+
+  // PADDING
+  const paddingLen = off % 2;
+  off += paddingLen;
+
+  // BLOB
+  const blobBytes = new Uint8Array(arrayBuffer, off);
+
+  return { header, blobBytes };
+}
+
+function swap16(u8) {
+  // Convert BE<->LE in-place for 16-bit payloads if ever needed
+  for (let i = 0; i < u8.length; i += 2) {
+    const b0 = u8[i];
+    u8[i] = u8[i + 1];
+    u8[i + 1] = b0;
+  }
+  return u8;
+}
+
+function blobToTypedArray(header, blobBytes) {
+  const { dtype, endianness } = header;
+
+  if (dtype === "uint16" && endianness === "BE") {
+    swap16(blobBytes); // to LE
+  }
+
+  if (dtype === "uint8") {
+    return new Uint8Array(blobBytes.buffer, blobBytes.byteOffset, blobBytes.byteLength);
+  }
+  if (dtype === "uint16") {
+    return new Uint16Array(blobBytes.buffer, blobBytes.byteOffset, blobBytes.byteLength / 2);
+  }
+  throw new Error(`Unsupported dtype ${dtype}`);
+}
+
+// Render grayscale image to canvas
+function renderGrayscale(canvas, typed, shape, header) {
+  const [H, W] = shape;
+  canvas.width = W;
+  canvas.height = H;
+
+  const ctx = canvas.getContext("2d");
+  const imgData = ctx.createImageData(W, H);
+  const data = imgData.data;
+
+  const dtype = header.dtype;
+  const resolution = header.resolution || (dtype === "uint8" ? 255 : 4096);
+
+  if (dtype === "uint8") {
+    // direct mapping
+    for (let i = 0, j = 0; i < typed.length; i++, j += 4) {
+      const g = typed[i]; // 0..255
+      data[j] = g; data[j+1] = g; data[j+2] = g; data[j+3] = 255;
+    }
+  } else {
+    // uint16 → normalize to 0..255 using 'resolution' (e.g., 4096)
+    const scale = 255 / resolution;
+    for (let i = 0, j = 0; i < typed.length; i++, j += 4) {
+      let g = Math.min(typed[i] * scale, 255) | 0;
+      data[j] = g; data[j+1] = g; data[j+2] = g; data[j+3] = 255;
+    }
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+}
+
+function pretty(obj) {
+  try { return JSON.stringify(obj, null, 2); } catch { return String(obj); }
+}
+
+// --- WebSocket wiring ---
+const statusEl = document.getElementById("status");
+const headerEl = document.getElementById("header");
+const canvas = document.getElementById("cv");
+const btnReload = document.getElementById("btnReload");
+
+const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+ws.binaryType = "arraybuffer";
+
+ws.onopen = () => { statusEl.textContent = "connected"; };
+ws.onerror = (e) => { statusEl.textContent = "error"; console.error(e); };
+ws.onclose = () => { statusEl.textContent = "closed"; };
+
+ws.onmessage = async (evt) => {
+  if (evt.data instanceof Blob) {
+    const ab = await evt.data.arrayBuffer();
+    handleBinary(ab);
+  } else if (evt.data instanceof ArrayBuffer) {
+    handleBinary(evt.data);
+  } else {
+    console.log("Text:", evt.data);
+  }
+};
+
+function handleBinary(arrayBuffer) {
+  try {
+    const { header, blobBytes } = readHeaderAndBlob(arrayBuffer);
+    headerEl.textContent = pretty(header);
+    const typed = blobToTypedArray(header, blobBytes);
+    renderGrayscale(canvas, typed, header.shape, header);
+  } catch (err) {
+    statusEl.textContent = "decode error";
+    console.error(err);
+  }
+}
+
+btnReload.onclick = () => {
+  if (ws.readyState === WebSocket.OPEN) ws.send("send");
+};
+</script>
+</body>
+</html>

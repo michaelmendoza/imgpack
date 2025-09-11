@@ -1,5 +1,7 @@
-# app.py
+# /demo/app.py
+from __future__ import annotations
 import os
+from pathlib import Path
 from typing import Optional, List
 
 import numpy as np
@@ -7,45 +9,37 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body
 from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from imgpack.utils import encode_data, pack_envelope
+from imgpack.utils import encode, pack_envelope
 
-HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", "8765"))
+ROOT = Path(__file__).resolve().parent.parent
+DEMO_DIR = ROOT / "demo"
+IMGPACK_DIR = ROOT / "imgpack"
 
-app = FastAPI(title="Imgpack demo")
+app = FastAPI(title="ImgPack Demo")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
 
-# --- Simple storage for "current array" (for demo only) ---
 _current_array: Optional[np.ndarray] = None
+_current_mode = {"dtype": "uint16", "bits": 12}  # defaults
 
-def default_array(h: int = 256, w: int = 384) -> np.ndarray:
-    """
-    Nice looking gradient/sine pattern for testing.
-    """
+def default_array(h=256, w=384) -> np.ndarray:
     y = np.linspace(0, 1, h, dtype=np.float32)[:, None]
     x = np.linspace(0, 1, w, dtype=np.float32)[None, :]
-    img = 0.5 + 0.5*np.sin(10*(x**2 + y**2)) * np.exp(-2*((x-0.5)**2 + (y-0.5)**2))
-    return img
+    return 0.5 + 0.5*np.sin(10*(x**2 + y**2)) * np.exp(-2*((x-0.5)**2 + (y-0.5)**2))
 
 @app.get("/", response_class=HTMLResponse)
-def index_html():
-    # Serve the static HTML file
-    return FileResponse("./demo/index.html")
+def index():
+    return FileResponse(DEMO_DIR / "index.html")
+
+@app.get("/decode.js")
+def decode_js():
+    return FileResponse(IMGPACK_DIR / "decode.js", media_type="application/javascript")
 
 @app.post("/set_array")
-def set_array(
-    data: List[List[float]] = Body(..., embed=True, description="2D list of numbers"),
-):
-    """
-    Provide a 2D array (list-of-lists) to use for the next WebSocket send.
-    Example:
-      POST /set_array
-      {"data": [[0,1,2],[3,4,5]]}
-    """
+def set_array(data: List[List[float]] = Body(..., embed=True)):
     global _current_array
     arr = np.asarray(data, dtype=np.float32)
     if arr.ndim != 2:
@@ -53,31 +47,39 @@ def set_array(
     _current_array = arr
     return {"ok": True, "shape": list(arr.shape)}
 
+@app.post("/set_mode")
+def set_mode(dtype: str = Body(...), bits: int = Body(...)):
+    dtype = dtype.lower()
+    _current_mode["dtype"] = dtype
+    _current_mode["bits"] = int(bits)
+    return {"ok": True, "mode": _current_mode}
+
+async def handle_encode():
+    arr = _current_array if _current_array is not None else default_array()
+    vmin = float(np.nanmin(arr))
+    vmax = float(np.nanmax(arr))
+    blob, header = encode(arr, vmin=vmin, vmax=vmax,
+                            dtype=_current_mode["dtype"], bits=_current_mode["bits"])
+    envelope = pack_envelope(blob, header)
+    return envelope
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     try:
-        # Pick array: either user-provided or a default generated one
-        arr = _current_array if _current_array is not None else default_array()
-
-        # Quantize → envelope
-        vmin = float(np.nanmin(arr))
-        vmax = float(np.nanmax(arr))
-        blob, header = encode_data(arr, vmin=vmin, vmax=vmax, dtype="uint16")
-        envelope = pack_envelope(blob, header)
-
-        # Send once on connect (you can extend this to stream periodically)
+        envelope = await handle_encode()
         await ws.send_bytes(envelope)
+        print("Sent initial envelope")
 
-        # Keep the socket open; echo "send" to resend (handy for manual testing)
         while True:
-            _ = await ws.receive_text()
+            _ = await ws.receive_text()  # any message triggers resend
+            envelope = await handle_encode()
             await ws.send_bytes(envelope)
+            print("Sent envelope")
 
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        # Optionally send an error text (client ignores non-binary)
         try:
             await ws.send_text(f"error: {e}")
         except Exception:

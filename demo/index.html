@@ -16,6 +16,7 @@
 </head>
 <body>
   <h1>ImgPack Demo</h1>
+  <div>Status: <span id="status">connecting…</span></div>
 
   <div style="margin-bottom: 2em;">
     <label>dtype:</label>
@@ -43,6 +44,7 @@
   <script type="module">
     import { readHeaderAndBlob, blobToTypedArray } from "/decode.js";
 
+    const statusEl = document.getElementById("status");
     const meta = document.getElementById("meta");
     const canvas = document.getElementById("cv");
     const dtypeSel = document.getElementById("dtype");
@@ -52,6 +54,10 @@
 
     const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
     ws.binaryType = "arraybuffer";
+
+    ws.onopen = () => { statusEl.textContent = "connected"; };
+    ws.onerror = (e) => { statusEl.textContent = "error"; console.error(e); };
+    ws.onclose = () => { statusEl.textContent = "closed"; };
 
     ws.onmessage = async (evt) => {
       const ab = (evt.data instanceof Blob) ? await evt.data.arrayBuffer() : evt.data;

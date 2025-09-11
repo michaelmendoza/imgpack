@@ -67,20 +67,17 @@ async def handle_encode():
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     try:
-        envelope = await handle_encode()
-        await ws.send_bytes(envelope)
-        print("Sent initial envelope")
-
         while True:
             _ = await ws.receive_text()  # any message triggers resend
             envelope = await handle_encode()
             await ws.send_bytes(envelope)
-            print("Sent envelope")
+            print("Sent binary data, size:", round(len(envelope)/1024/1024, ndigits=3), "MiB")
 
     except WebSocketDisconnect:
         pass
     except Exception as e:
         try:
+            print("Error:", e)
             await ws.send_text(f"error: {e}")
         except Exception:
             pass

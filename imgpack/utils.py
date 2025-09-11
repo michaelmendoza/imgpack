@@ -64,6 +64,7 @@ def _unpack_nbits(blob: bytes, nbits: int, count: int) -> np.ndarray:
     return out
 
 def _align_pad_len(offset: int, elem_size: int) -> int:
+    # pad so (offset + pad) % elem_size == 0
     if elem_size <= 1:
         return 0
     return (-offset) & (elem_size - 1)
@@ -99,6 +100,11 @@ def encode_data(
     if dtype_l not in _SUPPORTED_DTYPES:
         raise ValueError(f"Unsupported dtype {dtype!r}")
 
+    if vmin is None:
+        vmin = float(np.nanmin(data))
+    if vmax is None:
+        vmax = float(np.nanmax(data))
+
     if dtype_l == "packed":
         if not (1 <= bits <= 32):
             raise ValueError("For dtype='packed', bits must be 1..32")
@@ -113,8 +119,8 @@ def encode_data(
             "shape": [H, W],
             "order": "C",
             "size": size_mb,            # MB of BLOB
-            "bits": bits,
-            "resolution": 1 << bits,
+            "bits": bits,               # quantization precision
+            "resolution": 1 << bits,    # 2**bits
             "vmin": float(vmin),
             "vmax": float(vmax),
         }
@@ -175,6 +181,7 @@ def pack_data(blob: bytes, header: Dict[str, Any]) -> bytes:
     header_json = json.dumps(header, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     header_len = len(header_json)
 
+    # Determine element size for alignment
     dtype_l = str(header.get("dtype", "")).lower()
     if dtype_l == "packed":
         elem_size = 1
@@ -264,6 +271,18 @@ def decode_data(header: Dict[str, Any], blob: bytes) -> np.ndarray:
     if arr.size != expected:
         raise ValueError(f"Blob size {arr.size} does not match header shape {shape}.")
     return arr.reshape(shape, order=order)
+
+# ----------------------------
+# Low-level DECODER: decode_header
+# ----------------------------
+def decode_header(buf: bytes) -> Dict[str, Any]:
+    if len(buf) < 4:
+        raise ValueError("Buffer too small for HEADER_LEN.")
+    (header_len,) = struct.unpack(">I", buf[:4])
+    if 4 + header_len > len(buf):
+        raise ValueError("Invalid HEADER_LEN.")
+    header_json = buf[4:4+header_len]
+    return json.loads(header_json.decode("utf-8"))
 
 # ----------------------------
 # High-level: decode (unpack_data + decode_data)

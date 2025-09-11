@@ -68,7 +68,7 @@ envelope = encode(arr, vmin=0.0, vmax=1.0, dtype="float32", bits=0)
 ```python
 from imgpack import decode
 
-arr_decoded = decode(envelope)
+header, arr_decoded = = decode(envelope)
 
 print("Decoded shape:", arr_decoded.shape)
 print("Decoded dtype:", arr_decoded.dtype)

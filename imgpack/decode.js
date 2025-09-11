@@ -24,6 +24,7 @@ export function readHeaderAndBlob(arrayBuffer) {
   else if (dtype === "uint32" || dtype === "float32") elemSize = 4;
   else if (dtype === "float64") elemSize = 8;
 
+  // Note: elemSize is always 1,2,4,8 => power-of-two, so this alignment trick is valid
   const padLen = ((-(4 + headerLen)) & (elemSize - 1)) >>> 0;
   off += padLen;
 

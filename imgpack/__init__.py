@@ -1,1 +1,1 @@
-from .utils import encode, encode_data, pack_data, decode, decode_data, unpack_data
+from .utils import encode, encode_data, pack_data, decode, decode_data, unpack_data, decode_header

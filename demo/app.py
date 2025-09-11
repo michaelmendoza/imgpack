@@ -1,15 +1,13 @@
 # /demo/app.py
 from __future__ import annotations
-import os
 from pathlib import Path
 from typing import Optional, List
-
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body
 from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from imgpack.utils import encode, pack_envelope
+from imgpack import encode
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO_DIR = ROOT / "demo"
@@ -18,8 +16,7 @@ IMGPACK_DIR = ROOT / "imgpack"
 app = FastAPI(title="ImgPack Demo")
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
 
 _current_array: Optional[np.ndarray] = None
@@ -49,8 +46,7 @@ def set_array(data: List[List[float]] = Body(..., embed=True)):
 
 @app.post("/set_mode")
 def set_mode(dtype: str = Body(...), bits: int = Body(...)):
-    dtype = dtype.lower()
-    _current_mode["dtype"] = dtype
+    _current_mode["dtype"] = dtype.lower()
     _current_mode["bits"] = int(bits)
     return {"ok": True, "mode": _current_mode}
 
@@ -58,9 +54,8 @@ async def handle_encode():
     arr = _current_array if _current_array is not None else default_array()
     vmin = float(np.nanmin(arr))
     vmax = float(np.nanmax(arr))
-    blob, header = encode(arr, vmin=vmin, vmax=vmax,
+    envelope = encode(arr, vmin=vmin, vmax=vmax,
                             dtype=_current_mode["dtype"], bits=_current_mode["bits"])
-    envelope = pack_envelope(blob, header)
     return envelope
 
 @app.websocket("/ws")

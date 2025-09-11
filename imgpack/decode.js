@@ -1,7 +1,6 @@
 // /imgpack/decode.js
 // Envelope: HEADER_LEN(4, BE) | HEADER_JSON(utf-8) | PADDING | BLOB
-// Header keys: format, version, dtype, endianness, shape, order, size, bits, resolution, vmin, vmax
-// dtype: "packed" | "uint8" | "uint16" | "uint32" | "float16" | "float32" | "float64"
+// Exports: readHeaderAndBlob, blobToTypedArray, decode (combined)
 
 export function readHeaderAndBlob(arrayBuffer) {
   const dv = new DataView(arrayBuffer);
@@ -17,20 +16,13 @@ export function readHeaderAndBlob(arrayBuffer) {
   const headerStr = new TextDecoder("utf-8").decode(headerBytes);
   const header = JSON.parse(headerStr);
 
-  // Determine element size for padding alignment
   const dtype = (header.dtype || "").toLowerCase();
   let elemSize = 1;
-  if (dtype === "packed") {
-    elemSize = 1;
-  } else if (dtype === "uint8") {
-    elemSize = 1;
-  } else if (dtype === "uint16" || dtype === "float16") {
-    elemSize = 2;
-  } else if (dtype === "uint32" || dtype === "float32") {
-    elemSize = 4;
-  } else if (dtype === "float64") {
-    elemSize = 8;
-  }
+  if (dtype === "packed") elemSize = 1;
+  else if (dtype === "uint8") elemSize = 1;
+  else if (dtype === "uint16" || dtype === "float16") elemSize = 2;
+  else if (dtype === "uint32" || dtype === "float32") elemSize = 4;
+  else if (dtype === "float64") elemSize = 8;
 
   const padLen = ((-(4 + headerLen)) & (elemSize - 1)) >>> 0;
   off += padLen;
@@ -79,14 +71,19 @@ export function blobToTypedArray(header, blobBytes) {
   if (dtype === "float64")
     return new Float64Array(blobBytes.buffer, blobBytes.byteOffset, blobBytes.byteLength / 8);
   if (dtype === "float16") {
-    // If Float16Array exists, use it; else convert to Float32 by user if needed.
     if (typeof Float16Array !== "undefined") {
       return new Float16Array(blobBytes.buffer, blobBytes.byteOffset, blobBytes.byteLength / 2);
     } else {
-      // Fallback: reinterpret as Uint16Array; user can convert using a helper if needed.
+      // Fallback: return the raw u16 view; app can convert to f32 if needed.
       return new Uint16Array(blobBytes.buffer, blobBytes.byteOffset, blobBytes.byteLength / 2);
     }
   }
-
   throw new Error(`Unsupported dtype ${dtype}`);
+}
+
+// High-level: decode = readHeaderAndBlob + blobToTypedArray
+export function decode(arrayBuffer) {
+  const { header, blobBytes } = readHeaderAndBlob(arrayBuffer);
+  const typed = blobToTypedArray(header, blobBytes);
+  return { header, typed };
 }

@@ -5,38 +5,25 @@ import struct
 from typing import Dict, Tuple, Any
 import numpy as np
 
-# ---- Envelope: HEADER_LEN(4, BE) | HEADER_JSON(utf-8) | PADDING | BLOB ----
-# Header schema:
-#   format, version, dtype, endianness, shape, order, size, bits,
-#   resolution, vmin, vmax
-#
-# Notes:
-# - dtype: "packed" | "uint8" | "uint16" | "uint32" | "float16" | "float32" | "float64"
-# - size: payload element size in bits for typed containers (8/16/32/64),
-#         or BLOB byte size in MB (MiB) for reporting (we store MB in header.size)
-#   -> Per your request, header.size is the BLOB size in MB (MiB).
-# - bits: quantization precision for "packed" and integer containers; ignored for floats
-# - endianness: "LE"/"BE" for integer/float containers; None for "packed"
-# - packed payload is byte-stream; no endianness
+# Envelope: HEADER_LEN(4, BE) | HEADER_JSON(utf-8) | PADDING | BLOB
+# Header keys: format, version, dtype, endianness, shape, order, size, bits, resolution, vmin, vmax
+# dtype: "packed" | "uint8" | "uint16" | "uint32" | "float16" | "float32" | "float64"
+# - header.size = BLOB size in MB (MiB)
+# - packed uses a byte stream (endianness None)
+# - padding aligns BLOB start to element size: packed=1, uint8=1, uint16/float16=2, uint32/float32=4, float64=8
 
 _INT_DT_SIZES = {"uint8": 8, "uint16": 16, "uint32": 32}
 _FLOAT_DT_SIZES = {"float16": 16, "float32": 32, "float64": 64}
-_SUPPORTED_DTYPES = set(list(_INT_DT_SIZES.keys()) + list(_FLOAT_DT_SIZES.keys()) + ["packed"])
+_SUPPORTED_DTYPES = set(list(_INT_DT_SIZES) + list(_FLOAT_DT_SIZES) + ["packed"])
 
 def _np_dtype(dtype: str, endianness: str = "LE") -> np.dtype:
     d = dtype.lower()
-    if d == "uint8":
-        return np.dtype("u1")
-    if d == "uint16":
-        return np.dtype("<u2" if endianness == "LE" else ">u2")
-    if d == "uint32":
-        return np.dtype("<u4" if endianness == "LE" else ">u4")
-    if d == "float16":
-        return np.dtype("<f2" if endianness == "LE" else ">f2")
-    if d == "float32":
-        return np.dtype("<f4" if endianness == "LE" else ">f4")
-    if d == "float64":
-        return np.dtype("<f8" if endianness == "LE" else ">f8")
+    if d == "uint8":   return np.dtype("u1")
+    if d == "uint16":  return np.dtype("<u2" if endianness == "LE" else ">u2")
+    if d == "uint32":  return np.dtype("<u4" if endianness == "LE" else ">u4")
+    if d == "float16": return np.dtype("<f2" if endianness == "LE" else ">f2")
+    if d == "float32": return np.dtype("<f4" if endianness == "LE" else ">f4")
+    if d == "float64": return np.dtype("<f8" if endianness == "LE" else ">f8")
     raise ValueError(f"Unsupported dtype {dtype!r}")
 
 def _quantize_nbit(data: np.ndarray, vmin: float, vmax: float, bits: int) -> np.ndarray:
@@ -77,12 +64,14 @@ def _unpack_nbits(blob: bytes, nbits: int, count: int) -> np.ndarray:
     return out
 
 def _align_pad_len(offset: int, elem_size: int) -> int:
-    # pad so (offset + pad) % elem_size == 0
     if elem_size <= 1:
         return 0
     return (-offset) & (elem_size - 1)
 
-def encode(
+# ----------------------------
+# Low-level ENCODER: encode_data
+# ----------------------------
+def encode_data(
     data: np.ndarray,
     vmin: float,
     vmax: float,
@@ -93,18 +82,17 @@ def encode(
     version: int = 1,
 ) -> Tuple[bytes, Dict[str, Any]]:
     """
-    Encode 2D array using:
-      - dtype="packed": true n-bit bitstream (bits=1..32), endianness=None
-      - dtype in {"uint8","uint16","uint32"}: quantize to `bits` (1..container size) and store in that container
-      - dtype in {"float16","float32","float64"}: raw floats; bits ignored
+    Convert a 2D array into a (blob, header) pair.
 
-    Header keys: format, version, dtype, endianness, shape, order, size, bits, resolution, vmin, vmax
-      - size (header) = BLOB byte size in MB (MiB)
+    dtype:
+      - "packed": true n-bit bitstream (bits in 1..32), endianness=None
+      - "uint8"|"uint16"|"uint32": quantize to `bits` (1..container size)
+      - "float16"|"float32"|"float64": raw floats; bits ignored
     """
     if not isinstance(data, np.ndarray):
         data = np.asarray(data)
     if data.ndim != 2:
-        raise ValueError("encode expects a 2D array (H, W).")
+        raise ValueError("encode_data expects a 2D array (H, W).")
 
     H, W = data.shape
     dtype_l = dtype.lower()
@@ -125,8 +113,8 @@ def encode(
             "shape": [H, W],
             "order": "C",
             "size": size_mb,            # MB of BLOB
-            "bits": bits,               # quantization precision
-            "resolution": 1 << bits,    # 2**bits
+            "bits": bits,
+            "resolution": 1 << bits,
             "vmin": float(vmin),
             "vmax": float(vmax),
         }
@@ -150,7 +138,7 @@ def encode(
             "order": "C",
             "size": size_mb,            # MB of BLOB
             "bits": bits,               # quantization precision
-            "resolution": 1 << bits,    # 2**bits (effective precision)
+            "resolution": 1 << bits,
             "vmin": float(vmin),
             "vmax": float(vmax),
         }
@@ -176,15 +164,17 @@ def encode(
     }
     return blob, header
 
-def pack_envelope(blob: bytes, header: Dict[str, Any]) -> bytes:
+# ----------------------------
+# Low-level PACKER: pack_data
+# ----------------------------
+def pack_data(blob: bytes, header: Dict[str, Any]) -> bytes:
     """
     HEADER_LEN(4, BE) | HEADER_JSON | PADDING | BLOB
-    Padding aligns to element size: packed=1, uint8=1, uint16/float16=2, uint32/float32=4, float64=8
+    Align to element size (packed=1, uint8=1, uint16/float16=2, uint32/float32=4, float64=8).
     """
     header_json = json.dumps(header, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     header_len = len(header_json)
 
-    # Determine element size for alignment
     dtype_l = str(header.get("dtype", "")).lower()
     if dtype_l == "packed":
         elem_size = 1
@@ -201,7 +191,28 @@ def pack_envelope(blob: bytes, header: Dict[str, Any]) -> bytes:
 
     return b"".join([struct.pack(">I", header_len), header_json, pad, blob])
 
-def unpack_envelope(buf: bytes) -> Tuple[Dict[str, Any], bytes]:
+# ----------------------------
+# High-level: encode (encode_data + pack_data)
+# ----------------------------
+def encode(
+    data: np.ndarray,
+    vmin: float,
+    vmax: float,
+    dtype: str = "uint16",
+    bits: int = 12,
+    *,
+    endianness: str = "LE",
+    version: int = 1,
+) -> bytes:
+    blob, header = encode_data(
+        data, vmin, vmax, dtype=dtype, bits=bits, endianness=endianness, version=version
+    )
+    return pack_data(blob, header)
+
+# ----------------------------
+# Low-level UNPACKER: unpack_data
+# ----------------------------
+def unpack_data(buf: bytes) -> Tuple[Dict[str, Any], bytes]:
     if len(buf) < 4:
         raise ValueError("Buffer too small for HEADER_LEN.")
     (header_len,) = struct.unpack(">I", buf[:4])
@@ -231,7 +242,10 @@ def unpack_envelope(buf: bytes) -> Tuple[Dict[str, Any], bytes]:
     blob = buf[off:]
     return header, blob
 
-def decode(header: Dict[str, Any], blob: bytes) -> np.ndarray:
+# ----------------------------
+# Low-level DECODER: decode_data
+# ----------------------------
+def decode_data(header: Dict[str, Any], blob: bytes) -> np.ndarray:
     dtype_l = header["dtype"].lower()
     shape = tuple(header["shape"])
     order = header.get("order", "C")
@@ -239,13 +253,9 @@ def decode(header: Dict[str, Any], blob: bytes) -> np.ndarray:
     if dtype_l == "packed":
         bits = int(header["bits"])
         flat = _unpack_nbits(blob, bits, count=int(np.prod(shape)))
-        # place into smallest uint container that can hold the range
-        if bits <= 8:
-            arr = flat.astype(np.uint8, copy=False)
-        elif bits <= 16:
-            arr = flat.astype(np.uint16, copy=False)
-        else:
-            arr = flat.astype(np.uint32, copy=False)
+        if bits <= 8:   arr = flat.astype(np.uint8,  copy=False)
+        elif bits <= 16: arr = flat.astype(np.uint16, copy=False)
+        else:            arr = flat.astype(np.uint32, copy=False)
         return arr.reshape(shape, order=order)
 
     dt = _np_dtype(dtype_l, header.get("endianness", "LE"))
@@ -254,3 +264,11 @@ def decode(header: Dict[str, Any], blob: bytes) -> np.ndarray:
     if arr.size != expected:
         raise ValueError(f"Blob size {arr.size} does not match header shape {shape}.")
     return arr.reshape(shape, order=order)
+
+# ----------------------------
+# High-level: decode (unpack_data + decode_data)
+# ----------------------------
+def decode(buf: bytes) -> Tuple[Dict[str, Any], np.ndarray]:
+    header, blob = unpack_data(buf)
+    arr = decode_data(header, blob)
+    return header, arr

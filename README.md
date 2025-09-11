@@ -46,21 +46,18 @@ Visit [http://localhost:8765](http://localhost:8765) and you’ll see a grayscal
 
 ```python
 import numpy as np
-from imgpack.utils import encode, pack_envelope
+from imgpack import encode
 
 arr = np.linspace(0, 1, 64*64, dtype=np.float32).reshape(64, 64)
 
 # Example 1: true 12-bit packed stream
-blob, header = encode(arr, vmin=0.0, vmax=1.0, dtype="packed", bits=12)
-envelope = pack_envelope(blob, header)
+envelop = encode(arr, vmin=0.0, vmax=1.0, dtype="packed", bits=12)
 
 # Example 2: 12-bit quantization into uint16 container
-blob, header = encode(arr, vmin=0.0, vmax=1.0, dtype="uint16", bits=12)
-envelope = pack_envelope(blob, header)
+envelope = encode(arr, vmin=0.0, vmax=1.0, dtype="uint16", bits=12)
 
 # Example 3: raw float32 transport (no quantization)
-blob, header = encode(arr, vmin=0.0, vmax=1.0, dtype="float32", bits=0)
-envelope = pack_envelope(blob, header)
+envelope = encode(arr, vmin=0.0, vmax=1.0, dtype="float32", bits=0)
 
 # send `envelope` over a WebSocket:
 # await ws.send_bytes(envelope)
@@ -69,10 +66,9 @@ envelope = pack_envelope(blob, header)
 ### Python (decode)
 
 ```python
-from imgpack.utils import unpack_envelope, decode
+from imgpack import decode
 
-header, blob = unpack_envelope(envelope)
-arr_decoded = decode(header, blob)
+arr_decoded = decode(envelope)
 
 print("Decoded shape:", arr_decoded.shape)
 print("Decoded dtype:", arr_decoded.dtype)
@@ -99,15 +95,25 @@ Header: {
 }
 ```
 
+### Python Low-Level (decode + unpack) 
+```python
+from imgpack import encode_data, pack_data, unpack_data, decode_data
+
+blob, header = encode_data(arr, 0.0, 1.0, dtype="uint16", bits=12)
+envelope = pack_data(blob, header)
+
+header2, blob2 = unpack_data(envelope)
+array2 = decode_data(header2, blob2)
+```
+
 ### JavaScript (browser decode)
 
 ```js
-import { readHeaderAndBlob, blobToTypedArray } from "/decode.js";
+import { decode } from "/decode.js";
 
 ws.onmessage = async (evt) => {
   const ab = evt.data instanceof Blob ? await evt.data.arrayBuffer() : evt.data;
-  const { header, blobBytes } = readHeaderAndBlob(ab);
-  const typed = blobToTypedArray(header, blobBytes);
+  const { header, typed } = decode(ab);
   renderGrayscale(canvas, typed, header);
 };
 ```
